@@ -1,0 +1,4 @@
+pydantic<2
+fschat
+transformers_stream_generator
+fschat[model_worker]

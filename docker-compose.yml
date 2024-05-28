@@ -1,0 +1,109 @@
+version: '3.9'
+
+x-common:
+  &common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  volumes:
+    - ./logs:/app/logs
+    - .env:/.env
+    - ./static:/app/static
+    - ./models:/app/models
+  environment:
+    &common-env
+    TZ: "Asia/Shanghai"
+
+
+services:
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:0.4.25.dev25
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ALLOW_RESET=True
+      - CHROMA_SERVER_NOFILE = 8192
+    volumes:
+      - ./chroma-data:/chroma/chroma/
+    ports:
+      - '8000:8000'
+    healthcheck:
+      # Adjust below to match your container port
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # fastchat-controller:
+  #   <<: *common
+  #   build:
+  #     context: .
+  #     dockerfile: api.Dockerfile
+  #   image: fastchat:latest
+  #   ports:
+  #     - "21001:21001"
+  #   entrypoint: [ "python3", "-m", "fastchat.serve.controller", "--host", "0.0.0.0", "--port", "21001" ]
+
+
+  # fastchat-model-worker:
+  #   <<: *common
+  #   build:
+  #     context: .
+  #     dockerfile: model.Dockerfile
+  #   image: fsmodel:latest
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             device_ids: ['3']
+  #             capabilities: [gpu]
+  #   entrypoint: [ "python3", "-m", "fastchat.serve.vllm_worker", "--model-names", "gpt-4", "--model-path", "/app/models/qwen/Qwen1.5-7B-Chat", "--worker-address", "http://fastchat-model-worker:21002", "--controller-address", "http://fastchat-controller:21001", "--host", "0.0.0.0", "--port", "21002"]
+
+  # llm_server:
+  #   <<: *common
+  #   build:
+  #     context: .
+  #     dockerfile: api.Dockerfile
+  #   image: fastchat:latest
+  #   ports:
+  #     - "1282:8001"
+  #   entrypoint: [ "python3", "-m", "fastchat.serve.openai_api_server", "--controller-address", "http://fastchat-controller:21001", "--host", "0.0.0.0", "--port", "8001" ]
+
+  embedding_server:
+    <<: *common
+    command: [ "python3", "embedding_api.py", "--server-host", "0.0.0.0","--server-port", "8002", "--model-path", "/app/models/infgrad/stella-large-zh-v3-1792d" ]
+    ports:
+      - "1281:8002"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+
+  # load_data_server:
+  #   <<: *common
+  #   command: [ "python3", "load_data.py" ]
+  #   depends_on:
+  #     embedding_server:
+  #       condition: service_started
+  #   environment:
+  #     <<: *common-env
+
+  video_server:
+    <<: *common
+    command: [ "uvicorn", "app.main:app", "--host", "0.0.0.0","--port", "8003" ]
+    ports:
+      - "8003:8003"
+    restart: always
+    depends_on:
+      embedding_server:
+        condition: service_started
+    environment:
+      <<: *common-env

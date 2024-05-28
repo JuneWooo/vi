@@ -1,0 +1,7 @@
+vllm
+fschat
+einops
+transformers_stream_generator
+optimum
+auto-gptq
+fschat[model_worker]
